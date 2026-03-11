@@ -1,7 +1,7 @@
 {
   "name": "twilio-voice-ai-phone-system-integration",
   "version": "1.0.0",
-  "description": "Twilio Programmable Voice integration for a Claude-powered property management phone assistant.",
+  "description": "Twilio Programmable Voice integration for an OpenRouter-powered property management phone assistant.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

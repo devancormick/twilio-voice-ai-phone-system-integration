@@ -6,8 +6,11 @@ import { buildApp } from "../src/voice-app.js";
 function createConfig() {
   return {
     baseUrl: "https://voice.example.com",
-    anthropicApiKey: "test-key",
-    claudeModel: "claude-test",
+    openRouterApiKey: "test-key",
+    openRouterModel: "openrouter-test",
+    elevenLabsApiKey: "eleven-test-key",
+    elevenLabsVoiceId: "voice-id",
+    elevenLabsModelId: "eleven_multilingual_v2",
     businessTimezone: "America/New_York",
     businessHoursStart: "09:00",
     businessHoursEnd: "16:00",
@@ -59,14 +62,15 @@ test("incoming call prompts for speech", async () => {
   const app = buildApp({
     config: createConfig(),
     clock: () => new Date("2026-03-16T14:00:00Z"),
-    classifyIntent: async () => ({ route: "ai_response", reply: "ignored" })
+    classifyIntent: async () => ({ route: "ai_response", reply: "ignored" }),
+    streamSpeechImpl: async () => {}
   });
 
   const result = await invoke(app, { method: "POST", path: "/voice/incoming" });
 
   assert.equal(result.statusCode, 200);
   assert.match(result.body, /<Gather/);
-  assert.match(result.body, /Thank you for calling/);
+  assert.match(result.body, /<Play>https:\/\/voice\.example\.com\/voice\/audio\?text=/);
 });
 
 test("emergency calls transfer to emergency line", async () => {
@@ -77,7 +81,8 @@ test("emergency calls transfer to emergency line", async () => {
       route: "transfer_emergency",
       reply: "",
       summary: "Caller has a water leak"
-    })
+    }),
+    streamSpeechImpl: async () => {}
   });
 
   const result = await invoke(app, {
@@ -87,7 +92,7 @@ test("emergency calls transfer to emergency line", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /emergency maintenance line/);
+  assert.match(result.body, /voice\/audio\?text=/);
   assert.match(result.body, /<Number>\+15555550101<\/Number>/);
 });
 
@@ -99,7 +104,8 @@ test("property inquiries transfer to property line", async () => {
       route: "transfer_property",
       reply: "",
       summary: "Caller wants to speak to property management"
-    })
+    }),
+    streamSpeechImpl: async () => {}
   });
 
   const result = await invoke(app, {
@@ -109,7 +115,7 @@ test("property inquiries transfer to property line", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /property management team/);
+  assert.match(result.body, /voice\/audio\?text=/);
   assert.match(result.body, /<Number>\+15555550102<\/Number>/);
 });
 
@@ -121,7 +127,8 @@ test("general inquiries return ai response", async () => {
       route: "ai_response",
       reply: "We currently have two lakefront homes available this month.",
       summary: "Availability question"
-    })
+    }),
+    streamSpeechImpl: async () => {}
   });
 
   const result = await invoke(app, {
@@ -131,6 +138,33 @@ test("general inquiries return ai response", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /two lakefront homes available/);
-  assert.match(result.body, /If this becomes urgent/);
+  assert.match(result.body, /<Play>https:\/\/voice\.example\.com\/voice\/audio\?text=/);
+});
+
+test("audio endpoint streams generated speech", async () => {
+  let streamedText = "";
+  const app = buildApp({
+    config: createConfig(),
+    clock: () => new Date("2026-03-16T23:00:00Z"),
+    classifyIntent: async () => ({
+      route: "ai_response",
+      reply: "ignored",
+      summary: "ignored"
+    }),
+    streamSpeechImpl: async ({ text, response }) => {
+      streamedText = text;
+      response.writeHead(200, { "Content-Type": "audio/mpeg" });
+      response.end("fake-mp3");
+    }
+  });
+
+  const encoded = Buffer.from("Hello from ElevenLabs", "utf8").toString("base64url");
+  const result = await invoke(app, {
+    method: "GET",
+    path: `/voice/audio?text=${encoded}`
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(streamedText, "Hello from ElevenLabs");
+  assert.equal(result.body, "fake-mp3");
 });

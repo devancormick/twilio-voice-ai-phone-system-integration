@@ -39,6 +39,10 @@ export function dial(number, options = {}) {
   return `<Dial${attrs}><Number>${escapeXml(number)}</Number></Dial>`;
 }
 
+export function play(url) {
+  return `<Play>${escapeXml(url)}</Play>`;
+}
+
 export function gather(options = {}, body = "") {
   const attrs = [
     options.input ? ` input="${escapeXml(options.input)}"` : "",
