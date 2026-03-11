@@ -17,6 +17,7 @@ function createConfig() {
     elevenLabsModelId: "eleven_multilingual_v2",
     elevenLabsTimeoutMs: 20000,
     audioCacheTtlMs: 3600000,
+    useElevenLabsPlayback: false,
     businessTimezone: "America/New_York",
     businessHoursStart: "09:00",
     businessHoursEnd: "16:00",
@@ -82,7 +83,7 @@ test("incoming call prompts for speech", async () => {
 
   assert.equal(result.statusCode, 200);
   assert.match(result.body, /<Gather/);
-  assert.match(result.body, /<Play>http:\/\/localhost:3000\/voice\/audio\?text=/);
+  assert.match(result.body, /<Say>Thank you for calling/);
 });
 
 test("emergency calls transfer to emergency line", async () => {
@@ -105,7 +106,7 @@ test("emergency calls transfer to emergency line", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /voice\/audio\?text=/);
+  assert.match(result.body, /<Say>Please hold while I transfer you to our emergency maintenance line\./);
   assert.match(result.body, new RegExp(`<Number>${config.emergencyTransferNumber.replace("+", "\\+")}</Number>`));
 });
 
@@ -129,7 +130,7 @@ test("property inquiries transfer to property line", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /voice\/audio\?text=/);
+  assert.match(result.body, /<Say>Please hold while I transfer you to our property management team\./);
   assert.match(result.body, new RegExp(`<Number>${config.propertyTransferNumber.replace("+", "\\+")}</Number>`));
 });
 
@@ -152,7 +153,7 @@ test("general inquiries return ai response", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /<Play>http:\/\/localhost:3000\/voice\/audio\?text=/);
+  assert.match(result.body, /<Say>We currently have two lakefront homes available this month\./);
 });
 
 test("audio endpoint streams generated speech", async () => {
@@ -331,5 +332,5 @@ test("voice webhook accepts valid twilio signature when enabled", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /voice\/audio/);
+  assert.match(result.body, /<Say>Hello there\./);
 });

@@ -13,6 +13,21 @@ function buildAbsoluteUrl(baseUrl, path) {
   return `${normalizeBaseUrl(baseUrl)}${path}`;
 }
 
+function resolveBaseUrl(config, request) {
+  const configured = config.baseUrl?.trim();
+  if (configured && !configured.includes("localhost")) {
+    return normalizeBaseUrl(configured);
+  }
+
+  const host = request.headers["x-forwarded-host"] || request.headers.host;
+  const proto = request.headers["x-forwarded-proto"] || "http";
+  if (host) {
+    return `${proto}://${host}`;
+  }
+
+  return normalizeBaseUrl(config.baseUrl);
+}
+
 function welcomeMessage(config, isOpen) {
   if (isOpen) {
     return `Thank you for calling ${config.businessName}. Please briefly tell me how I can help you today.`;
@@ -25,12 +40,19 @@ function fallbackMessage() {
   return "I’m sorry, I didn’t catch that. Please briefly describe how I can help you.";
 }
 
-function buildIncomingTwiml(config, isOpen) {
+function speak(config, baseUrl, text) {
+  if (config.useElevenLabsPlayback) {
+    return play(buildAudioUrl(baseUrl, text));
+  }
+  return say(text);
+}
+
+function buildIncomingTwiml(config, baseUrl, isOpen) {
   return buildVoiceResponse([
     gather(
       {
         input: "speech",
-        action: buildAbsoluteUrl(config.baseUrl, "/voice/respond"),
+        action: buildAbsoluteUrl(baseUrl, "/voice/respond"),
         method: "POST",
         speechTimeout: "auto",
         timeout: 3,
@@ -38,36 +60,31 @@ function buildIncomingTwiml(config, isOpen) {
         actionOnEmptyResult: "true",
         hints: "leasing, maintenance, emergency, property management, availability, application"
       },
-      play(buildAudioUrl(config.baseUrl, welcomeMessage(config, isOpen)))
+      speak(config, baseUrl, welcomeMessage(config, isOpen))
     ),
     pause(1),
-    redirect(buildAbsoluteUrl(config.baseUrl, "/voice/incoming"), "POST")
+    redirect(buildAbsoluteUrl(baseUrl, "/voice/incoming"), "POST")
   ]);
 }
 
-function buildTransferTwiml(message, transferNumber, config) {
+function buildTransferTwiml(message, transferNumber, config, baseUrl) {
   return buildVoiceResponse([
-    play(buildAudioUrl(config.baseUrl, message)),
+    speak(config, baseUrl, message),
     dial(transferNumber, { timeout: 25 }),
-    play(
-      buildAudioUrl(
-        config.baseUrl,
-        "I’m sorry, the transfer did not connect. Please leave a voicemail or call back shortly."
-      )
-    ),
+    speak(config, baseUrl, "I’m sorry, the transfer did not connect. Please leave a voicemail or call back shortly."),
     hangup()
   ]);
 }
 
-function buildAiReplyTwiml(reply, config, isOpen) {
+function buildAiReplyTwiml(reply, config, baseUrl, isOpen) {
   const closing = isOpen
     ? "If you need anything else, please call again."
     : "If this becomes urgent, please call back and say emergency maintenance.";
 
   return buildVoiceResponse([
-    play(buildAudioUrl(config.baseUrl, reply)),
+    speak(config, baseUrl, reply),
     pause(1),
-    play(buildAudioUrl(config.baseUrl, closing)),
+    speak(config, baseUrl, closing),
     hangup()
   ]);
 }
@@ -83,7 +100,8 @@ export function buildApp({
   requestIdFactory = () => Math.random().toString(36).slice(2, 10)
 }) {
   function makeAbsoluteRequestUrl(request) {
-    return buildAbsoluteUrl(config.baseUrl, new URL(request.url, "http://localhost").pathname);
+    const baseUrl = resolveBaseUrl(config, request);
+    return buildAbsoluteUrl(baseUrl, new URL(request.url, "http://localhost").pathname);
   }
 
   function isAdminAuthorized(request) {
@@ -146,6 +164,7 @@ export function buildApp({
 
   async function handleIncoming(request, response, form, requestId) {
     const open = isBusinessHours(clock(), config);
+    const baseUrl = resolveBaseUrl(config, request);
     callStore.upsert({
       callSid: form.CallSid,
       from: form.From,
@@ -162,7 +181,7 @@ export function buildApp({
       to: form.To,
       isOpen: open
     });
-    sendXml(response, 200, buildIncomingTwiml(config, open));
+    sendXml(response, 200, buildIncomingTwiml(config, baseUrl, open));
   }
 
   async function handleAudio(request, response, requestId) {
@@ -181,6 +200,7 @@ export function buildApp({
   async function handleRespond(_request, response, form, requestId) {
     const speechText = form.SpeechResult?.trim();
     const open = isBusinessHours(clock(), config);
+    const baseUrl = resolveBaseUrl(config, _request);
 
     if (!speechText) {
       callStore.upsert({
@@ -197,14 +217,14 @@ export function buildApp({
           gather(
             {
               input: "speech",
-              action: buildAbsoluteUrl(config.baseUrl, "/voice/respond"),
+              action: buildAbsoluteUrl(baseUrl, "/voice/respond"),
               method: "POST",
               speechTimeout: "auto",
               timeout: 3,
               language: "en-US",
               actionOnEmptyResult: "true"
             },
-            play(buildAudioUrl(config.baseUrl, fallbackMessage()))
+            speak(config, baseUrl, fallbackMessage())
           ),
           hangup()
         ])
@@ -245,7 +265,8 @@ export function buildApp({
           buildTransferTwiml(
             "Please hold while I transfer you to our emergency maintenance line.",
             config.emergencyTransferNumber,
-            config
+            config,
+            baseUrl
           )
         );
         return;
@@ -258,13 +279,14 @@ export function buildApp({
           buildTransferTwiml(
             "Please hold while I transfer you to our property management team.",
             config.propertyTransferNumber,
-            config
+            config,
+            baseUrl
           )
         );
         return;
       }
 
-      sendXml(response, 200, buildAiReplyTwiml(result.reply, config, open));
+      sendXml(response, 200, buildAiReplyTwiml(result.reply, config, baseUrl, open));
     } catch (error) {
       logger.error("voice_response_error", {
         requestId,

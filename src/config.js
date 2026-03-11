@@ -29,6 +29,7 @@ export function getConfig() {
     elevenLabsModelId: readEnv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
     elevenLabsTimeoutMs: Number.parseInt(readEnv("ELEVENLABS_TIMEOUT_MS", "20000"), 10),
     audioCacheTtlMs: Number.parseInt(readEnv("AUDIO_CACHE_TTL_MS", "3600000"), 10),
+    useElevenLabsPlayback: readBool("USE_ELEVENLABS_PLAYBACK", false),
     businessTimezone: readEnv("BUSINESS_TIMEZONE", "America/New_York"),
     businessHoursStart: readEnv("BUSINESS_HOURS_START", "09:00"),
     businessHoursEnd: readEnv("BUSINESS_HOURS_END", "16:00"),
