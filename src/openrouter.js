@@ -50,6 +50,7 @@ export async function classifyCallerIntent({
   speechText,
   isOpen,
   businessName,
+  timeoutMs = 15000,
   fetchImpl = fetch
 }) {
   const ruleBasedRoute = detectRuleBasedRoute(speechText);
@@ -86,6 +87,8 @@ export async function classifyCallerIntent({
     payload.models = requestedModels;
   }
 
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
   const response = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -94,7 +97,10 @@ export async function classifyCallerIntent({
       "HTTP-Referer": "https://localhost",
       "X-Title": "twilio-voice-ai-phone-system-integration"
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: abortController.signal
+  }).finally(() => {
+    clearTimeout(timeoutId);
   });
 
   if (!response.ok) {

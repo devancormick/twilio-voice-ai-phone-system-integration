@@ -1,8 +1,9 @@
 import { isBusinessHours } from "./business-hours.js";
 import { streamSpeech, buildAudioUrl } from "./elevenlabs.js";
-import { parseFormBody, readRequestBody, sendJson, sendXml } from "./http.js";
+import { parseFormBody, readRequestBody, sendJson, sendText, sendXml } from "./http.js";
 import { classifyCallerIntent } from "./openrouter.js";
 import { buildVoiceResponse, dial, gather, hangup, pause, play, redirect, say } from "./twiml.js";
+import { isTwilioRequestValid } from "./twilio-security.js";
 
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
@@ -75,37 +76,120 @@ export function buildApp({
   config,
   clock = () => new Date(),
   classifyIntent = classifyCallerIntent,
-  streamSpeechImpl = streamSpeech
+  streamSpeechImpl = streamSpeech,
+  logger = console,
+  callStore = { upsert() {}, list() { return []; } },
+  audioCache,
+  requestIdFactory = () => Math.random().toString(36).slice(2, 10)
 }) {
-  async function handleHealth(response) {
-    sendJson(response, 200, { ok: true });
+  function makeAbsoluteRequestUrl(request) {
+    return buildAbsoluteUrl(config.baseUrl, new URL(request.url, "http://localhost").pathname);
   }
 
-  async function handleIncoming(response) {
+  function isAdminAuthorized(request) {
+    if (!config.adminApiKey) {
+      return false;
+    }
+    return request.headers["x-admin-api-key"] === config.adminApiKey;
+  }
+
+  async function handleHealth(response) {
+    sendJson(response, 200, {
+      ok: true,
+      service: "twilio-voice-ai-phone-system-integration",
+      environment: config.nodeEnv
+    });
+  }
+
+  async function handleRecentCalls(request, response) {
+    if (!isAdminAuthorized(request)) {
+      sendJson(response, 401, { error: "Unauthorized" });
+      return;
+    }
+
+    sendJson(response, 200, { calls: callStore.list() });
+  }
+
+  async function handleStatusCallback(request, response, form) {
+    callStore.upsert({
+      callSid: form.CallSid,
+      callStatus: form.CallStatus,
+      direction: form.Direction,
+      from: form.From,
+      to: form.To,
+      lastEvent: "status_callback"
+    });
+    sendText(response, 204, "");
+  }
+
+  async function validateTwilioRequest(request, response, form) {
+    if (!config.requireTwilioSignature) {
+      return true;
+    }
+
+    const signature = request.headers["x-twilio-signature"];
+    const valid = isTwilioRequestValid({
+      authToken: config.twilioAuthToken,
+      signature,
+      url: makeAbsoluteRequestUrl(request),
+      formParams: form
+    });
+
+    if (!valid) {
+      logger.warn("invalid_twilio_signature", { path: request.url });
+      sendJson(response, 403, { error: "Invalid Twilio signature" });
+      return false;
+    }
+
+    return true;
+  }
+
+  async function handleIncoming(request, response, form, requestId) {
     const open = isBusinessHours(clock(), config);
+    callStore.upsert({
+      callSid: form.CallSid,
+      from: form.From,
+      to: form.To,
+      direction: form.Direction,
+      route: "incoming",
+      isOpen: open,
+      lastEvent: "incoming"
+    });
+    logger.info("voice_incoming", {
+      requestId,
+      callSid: form.CallSid,
+      from: form.From,
+      to: form.To,
+      isOpen: open
+    });
     sendXml(response, 200, buildIncomingTwiml(config, open));
   }
 
-  async function handleAudio(request, response) {
+  async function handleAudio(request, response, requestId) {
     const url = new URL(request.url, "http://localhost");
     const encodedText = url.searchParams.get("text");
     const text = encodedText ? Buffer.from(encodedText, "base64url").toString("utf8") : "";
 
     try {
-      await streamSpeechImpl({ config, text, response });
+      await streamSpeechImpl({ config, text, response, audioCache });
     } catch (error) {
-      console.error("Audio generation error", error);
+      logger.error("audio_generation_error", { requestId, error: error.message });
       sendJson(response, 502, { error: "Audio generation failed" });
     }
   }
 
-  async function handleRespond(request, response) {
-    const body = await readRequestBody(request);
-    const form = parseFormBody(body);
+  async function handleRespond(_request, response, form, requestId) {
     const speechText = form.SpeechResult?.trim();
     const open = isBusinessHours(clock(), config);
 
     if (!speechText) {
+      callStore.upsert({
+        callSid: form.CallSid,
+        from: form.From,
+        to: form.To,
+        isOpen: open,
+        lastEvent: "empty_speech"
+      });
       sendXml(
         response,
         200,
@@ -134,7 +218,24 @@ export function buildApp({
         model: config.openRouterModel,
         speechText,
         isOpen: open,
-        businessName: config.businessName
+        businessName: config.businessName,
+        timeoutMs: config.openRouterTimeoutMs
+      });
+      callStore.upsert({
+        callSid: form.CallSid,
+        from: form.From,
+        to: form.To,
+        transcript: speechText,
+        summary: result.summary,
+        route: result.route,
+        isOpen: open,
+        lastEvent: "responded"
+      });
+      logger.info("voice_classified", {
+        requestId,
+        callSid: form.CallSid,
+        route: result.route,
+        isOpen: open
       });
 
       if (result.route === "transfer_emergency") {
@@ -165,7 +266,11 @@ export function buildApp({
 
       sendXml(response, 200, buildAiReplyTwiml(result.reply, config, open));
     } catch (error) {
-      console.error("Voice response error", error);
+      logger.error("voice_response_error", {
+        requestId,
+        callSid: form.CallSid,
+        error: error.message
+      });
       sendXml(
         response,
         200,
@@ -180,29 +285,64 @@ export function buildApp({
   }
 
   async function handle(request, response) {
-    const url = new URL(request.url, "http://localhost");
+    const requestId = requestIdFactory();
+    try {
+      const url = new URL(request.url, "http://localhost");
 
-    if (request.method === "GET" && url.pathname === "/health") {
-      await handleHealth(response);
-      return;
+      if (request.method === "GET" && url.pathname === "/health") {
+        await handleHealth(response);
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/calls") {
+        await handleRecentCalls(request, response);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/voice/incoming") {
+        const body = await readRequestBody(request, config.maxRequestBodyBytes);
+        const form = parseFormBody(body);
+        if (!(await validateTwilioRequest(request, response, form))) {
+          return;
+        }
+        await handleIncoming(request, response, form, requestId);
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/voice/audio") {
+        await handleAudio(request, response, requestId);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/voice/respond") {
+        const body = await readRequestBody(request, config.maxRequestBodyBytes);
+        const form = parseFormBody(body);
+        if (!(await validateTwilioRequest(request, response, form))) {
+          return;
+        }
+        await handleRespond(request, response, form, requestId);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/voice/status") {
+        const body = await readRequestBody(request, config.maxRequestBodyBytes);
+        const form = parseFormBody(body);
+        if (!(await validateTwilioRequest(request, response, form))) {
+          return;
+        }
+        await handleStatusCallback(request, response, form);
+        return;
+      }
+
+      sendJson(response, 404, { error: "Not found" });
+    } catch (error) {
+      logger.error("request_handling_error", {
+        requestId,
+        path: request.url,
+        error: error.message
+      });
+      sendJson(response, 500, { error: "Internal server error", requestId });
     }
-
-    if (request.method === "POST" && url.pathname === "/voice/incoming") {
-      await handleIncoming(response);
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/voice/audio") {
-      await handleAudio(request, response);
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/voice/respond") {
-      await handleRespond(request, response);
-      return;
-    }
-
-    sendJson(response, 404, { error: "Not found" });
   }
 
   return { handle };
