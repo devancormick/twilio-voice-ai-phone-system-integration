@@ -17,7 +17,7 @@ Small-business Twilio Programmable Voice integration for an OpenRouter-powered p
 
 Copy `.env.example` into `.env` and provide the real values:
 
-- `BASE_URL`: public HTTPS base URL Twilio will call
+- `BASE_URL`: base URL the app uses to build Twilio callback and audio URLs. Use `http://localhost:3000` for local testing here and a public HTTPS URL when wiring Twilio.
 - `OPENROUTER_API_KEY`: API key for OpenRouter
 - `OPENROUTER_MODEL`: model used for routing and reply generation
 - `ELEVENLABS_API_KEY`: API key for ElevenLabs
@@ -39,7 +39,7 @@ Copy `.env.example` into `.env` and provide the real values:
 
 Point the Twilio voice webhook for the business phone number at:
 
-`POST https://your-domain.example/voice/incoming`
+`POST http://localhost:3000/voice/incoming`
 
 The app responds with TwiML. It gathers speech from the caller, sends the transcript to OpenRouter for routing, then either:
 

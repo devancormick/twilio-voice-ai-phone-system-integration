@@ -5,7 +5,7 @@ import { buildApp } from "../src/voice-app.js";
 
 function createConfig() {
   return {
-    baseUrl: "https://voice.example.com",
+    baseUrl: "http://localhost:3000",
     openRouterApiKey: "test-key",
     openRouterModel: "openrouter-test",
     elevenLabsApiKey: "eleven-test-key",
@@ -14,8 +14,8 @@ function createConfig() {
     businessTimezone: "America/New_York",
     businessHoursStart: "09:00",
     businessHoursEnd: "16:00",
-    emergencyTransferNumber: "+15555550101",
-    propertyTransferNumber: "+15555550102",
+    emergencyTransferNumber: "+15622659207",
+    propertyTransferNumber: "+15622659207",
     businessName: "Lake Oconee Property Management"
   };
 }
@@ -70,12 +70,13 @@ test("incoming call prompts for speech", async () => {
 
   assert.equal(result.statusCode, 200);
   assert.match(result.body, /<Gather/);
-  assert.match(result.body, /<Play>https:\/\/voice\.example\.com\/voice\/audio\?text=/);
+  assert.match(result.body, /<Play>http:\/\/localhost:3000\/voice\/audio\?text=/);
 });
 
 test("emergency calls transfer to emergency line", async () => {
+  const config = createConfig();
   const app = buildApp({
-    config: createConfig(),
+    config,
     clock: () => new Date("2026-03-16T14:00:00Z"),
     classifyIntent: async () => ({
       route: "transfer_emergency",
@@ -93,12 +94,13 @@ test("emergency calls transfer to emergency line", async () => {
 
   assert.equal(result.statusCode, 200);
   assert.match(result.body, /voice\/audio\?text=/);
-  assert.match(result.body, /<Number>\+15555550101<\/Number>/);
+  assert.match(result.body, new RegExp(`<Number>${config.emergencyTransferNumber.replace("+", "\\+")}</Number>`));
 });
 
 test("property inquiries transfer to property line", async () => {
+  const config = createConfig();
   const app = buildApp({
-    config: createConfig(),
+    config,
     clock: () => new Date("2026-03-16T14:00:00Z"),
     classifyIntent: async () => ({
       route: "transfer_property",
@@ -116,7 +118,7 @@ test("property inquiries transfer to property line", async () => {
 
   assert.equal(result.statusCode, 200);
   assert.match(result.body, /voice\/audio\?text=/);
-  assert.match(result.body, /<Number>\+15555550102<\/Number>/);
+  assert.match(result.body, new RegExp(`<Number>${config.propertyTransferNumber.replace("+", "\\+")}</Number>`));
 });
 
 test("general inquiries return ai response", async () => {
@@ -138,7 +140,7 @@ test("general inquiries return ai response", async () => {
   });
 
   assert.equal(result.statusCode, 200);
-  assert.match(result.body, /<Play>https:\/\/voice\.example\.com\/voice\/audio\?text=/);
+  assert.match(result.body, /<Play>http:\/\/localhost:3000\/voice\/audio\?text=/);
 });
 
 test("audio endpoint streams generated speech", async () => {
