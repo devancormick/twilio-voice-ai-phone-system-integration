@@ -5,6 +5,12 @@ import { createCallStore } from "../src/call-store.js";
 import { isTwilioRequestValid } from "../src/twilio-security.js";
 import { buildApp } from "../src/voice-app.js";
 
+const noopLogger = {
+  info() {},
+  warn() {},
+  error() {}
+};
+
 function createConfig() {
   return {
     nodeEnv: "test",
@@ -76,7 +82,8 @@ test("incoming call prompts for speech", async () => {
     config: createConfig(),
     clock: () => new Date("2026-03-16T14:00:00Z"),
     classifyIntent: async () => ({ route: "ai_response", reply: "ignored" }),
-    streamSpeechImpl: async () => {}
+    streamSpeechImpl: async () => {},
+    logger: noopLogger
   });
 
   const result = await invoke(app, { method: "POST", path: "/voice/incoming" });
@@ -96,7 +103,8 @@ test("emergency calls transfer to emergency line", async () => {
       reply: "",
       summary: "Caller has a water leak"
     }),
-    streamSpeechImpl: async () => {}
+    streamSpeechImpl: async () => {},
+    logger: noopLogger
   });
 
   const result = await invoke(app, {
@@ -120,7 +128,8 @@ test("property inquiries transfer to property line", async () => {
       reply: "",
       summary: "Caller wants to speak to property management"
     }),
-    streamSpeechImpl: async () => {}
+    streamSpeechImpl: async () => {},
+    logger: noopLogger
   });
 
   const result = await invoke(app, {
@@ -143,7 +152,8 @@ test("general inquiries return ai response", async () => {
       reply: "We currently have two lakefront homes available this month.",
       summary: "Availability question"
     }),
-    streamSpeechImpl: async () => {}
+    streamSpeechImpl: async () => {},
+    logger: noopLogger
   });
 
   const result = await invoke(app, {
@@ -170,7 +180,8 @@ test("audio endpoint streams generated speech", async () => {
       streamedText = text;
       response.writeHead(200, { "Content-Type": "audio/mpeg" });
       response.end("fake-mp3");
-    }
+    },
+    logger: noopLogger
   });
 
   const encoded = Buffer.from("Hello from ElevenLabs", "utf8").toString("base64url");
@@ -210,7 +221,8 @@ test("audio endpoint uses cache on repeated request", async () => {
       set(key, value) {
         this.store.set(key, value);
       }
-    }
+    },
+    logger: noopLogger
   });
 
   const encoded = Buffer.from("Hello from cache", "utf8").toString("base64url");
@@ -224,7 +236,8 @@ test("audio endpoint uses cache on repeated request", async () => {
 
 test("recent calls endpoint requires admin key", async () => {
   const app = buildApp({
-    config: createConfig()
+    config: createConfig(),
+    logger: noopLogger
   });
 
   const result = await invoke(app, { method: "GET", path: "/api/calls" });
@@ -243,7 +256,8 @@ test("recent calls endpoint returns logged calls for admin", async () => {
       reply: "We can help with that.",
       summary: "General inquiry"
     }),
-    streamSpeechImpl: async () => {}
+    streamSpeechImpl: async () => {},
+    logger: noopLogger
   });
 
   await invoke(app, {
@@ -269,7 +283,7 @@ test("voice webhook rejects invalid twilio signature when enabled", async () => 
     requireTwilioSignature: true,
     twilioAuthToken: "twilio-test-token"
   };
-  const app = buildApp({ config });
+  const app = buildApp({ config, logger: noopLogger });
 
   const result = await invoke(app, {
     method: "POST",
@@ -321,7 +335,8 @@ test("voice webhook accepts valid twilio signature when enabled", async () => {
       reply: "Hello there.",
       summary: "Greeting"
     }),
-    streamSpeechImpl: async () => {}
+    streamSpeechImpl: async () => {},
+    logger: noopLogger
   });
 
   const result = await invoke(app, {
