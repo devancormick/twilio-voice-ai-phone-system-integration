@@ -16,7 +16,7 @@ export function getConfig() {
     port: Number.parseInt(readEnv("PORT", "3000"), 10),
     baseUrl: readEnv("BASE_URL"),
     openRouterApiKey: readEnv("OPENROUTER_API_KEY"),
-    openRouterModel: readEnv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet"),
+    openRouterModel: readEnv("OPENROUTER_MODEL", "openrouter/auto"),
     elevenLabsApiKey: readEnv("ELEVENLABS_API_KEY"),
     elevenLabsVoiceId: readEnv("ELEVENLABS_VOICE_ID"),
     elevenLabsModelId: readEnv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
